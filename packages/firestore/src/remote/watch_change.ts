@@ -36,6 +36,7 @@ import { ExistenceFilter } from './existence_filter';
 import { RemoteEvent, TargetChange } from './remote_event';
 import { ByteString } from '../util/byte_string';
 import { isDocumentTarget } from '../core/target';
+import { RemoteStore } from './remote_store';
 
 /**
  * Internal representation of the watcher API protocol buffers.

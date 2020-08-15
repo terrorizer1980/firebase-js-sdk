@@ -42,6 +42,14 @@ import {
 import { newSyncEngine, SyncEngine } from '../../../src/core/sync_engine';
 import { User } from '../../../src/auth/user';
 import { MAX_CONCURRENT_LIMBO_RESOLUTIONS } from '../../../src/core/firestore_client';
+import { newRemoteStore, RemoteStore } from '../../../src/remote/remote_store';
+import { newDatastore } from '../../../src/remote/datastore';
+import { AsyncQueue } from '../../../src/util/async_queue';
+import { NoopConnectivityMonitor } from '../../../src/remote/connectivity_monitor_noop';
+import { EmptyCredentialsProvider } from '../../../src/api/credentials';
+import { newSerializer } from '../../../src/platform/serializer';
+import { TEST_DATABASE_ID } from '../local/persistence_test_helpers';
+import { Connection } from '../../../src/remote/connection';
 
 // This test uses mocks that only implement the required functionality.
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -57,36 +65,40 @@ describe('EventManager', () => {
     };
   }
 
-  let remoteStoreSpy: any;
   let localStoreSpy: any;
   let sharedClientStateSpy: any;
+  let remoteStore: RemoteStore;
   let syncEngine: SyncEngine;
 
   beforeEach(() => {
-    remoteStoreSpy = {
-      remoteSyncer: {},
-      listen: sinon.spy(),
-      unlisten: sinon.spy()
-    } as any;
-    localStoreSpy = {
-      allocateTarget: sinon.stub().returns(Promise.resolve(0)),
-      releaseTarget: sinon.stub().returns(Promise.resolve()),
-      executeQuery: sinon.stub().returns(
-        Promise.resolve({
-          documents: documentMap(),
-          remoteKeys: documentKeySet()
-        })
-      )
-    } as any;
-    sharedClientStateSpy = {
-      isActiveQueryTarget: sinon.stub().returns(false),
-      addLocalQueryTarget: sinon.spy(),
-      removeLocalQueryTarget: sinon.spy(),
-      clearQueryState: sinon.spy()
-    } as any;
+    const connectionSpy: Connection = {
+      invokeRPC: sinon.spy(),
+      invokeStreamingRPC: sinon.spy(),
+      openStream: sinon.stub().returns({
+        onOpen: sinon.spy(),
+        onClose: sinon.spy(),
+        onMessage: sinon.spy(),
+        send: sinon.spy(),
+        close: sinon.spy()
+      })
+    };
+    const datastore = newDatastore(
+      new EmptyCredentialsProvider(),
+      connectionSpy,
+      newSerializer(TEST_DATABASE_ID)
+    );
+    const asyncQueue = new AsyncQueue();
+    remoteStore = newRemoteStore(
+      localStoreSpy,
+      datastore,
+      asyncQueue,
+      /* onlineStateHandler= */ () => {},
+      new NoopConnectivityMonitor()
+    );
+
     syncEngine = newSyncEngine(
       localStoreSpy,
-      remoteStoreSpy,
+      remoteStore,
       sharedClientStateSpy,
       User.UNAUTHENTICATED,
       MAX_CONCURRENT_LIMBO_RESOLUTIONS,

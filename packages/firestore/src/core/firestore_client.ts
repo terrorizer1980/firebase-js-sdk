@@ -28,7 +28,13 @@ import { GarbageCollectionScheduler, Persistence } from '../local/persistence';
 import { Document, NoDocument } from '../model/document';
 import { DocumentKey } from '../model/document_key';
 import { Mutation } from '../model/mutation';
-import { RemoteStore } from '../remote/remote_store';
+import {
+  fillWritePipeline,
+  remoteStoreHandleCredentialChange,
+  RemoteStore,
+  enableNetwork,
+  disableNetwork, remoteStoreShutdown
+} from '../remote/remote_store';
 import { AsyncQueue, wrapInUserErrorIfRecoverable } from '../util/async_queue';
 import { Code, FirestoreError } from '../util/error';
 import { logDebug } from '../util/log';
@@ -205,7 +211,7 @@ export class FirestoreClient {
         ).then(this.initializationDone.resolve, this.initializationDone.reject);
       } else {
         this.asyncQueue.enqueueRetryable(() =>
-          this.remoteStore.handleCredentialChange(user)
+          remoteStoreHandleCredentialChange(this.remoteStore, user)
         );
       }
     });
@@ -224,7 +230,7 @@ export class FirestoreClient {
     this.verifyNotTerminated();
     return this.asyncQueue.enqueue(() => {
       this.persistence.setNetworkEnabled(true);
-      return this.remoteStore.enableNetwork();
+      return enableNetwork(this.remoteStore);
     });
   }
 
@@ -288,6 +294,8 @@ export class FirestoreClient {
       this.persistence.setDatabaseDeletedListener(async () => {
         await this.terminate();
       });
+
+      await fillWritePipeline(this.remoteStore);
 
       persistenceResult.resolve();
     } catch (error) {
@@ -368,7 +376,7 @@ export class FirestoreClient {
     this.verifyNotTerminated();
     return this.asyncQueue.enqueue(() => {
       this.persistence.setNetworkEnabled(false);
-      return this.remoteStore.disableNetwork();
+      return disableNetwork(this.remoteStore);
     });
   }
 
@@ -382,7 +390,7 @@ export class FirestoreClient {
           this.gcScheduler.stop();
         }
 
-        await this.remoteStore.shutdown();
+        await remoteStoreShutdown(this.remoteStore);
         await this.sharedClientState.shutdown();
         await this.persistence.shutdown();
 
@@ -573,7 +581,7 @@ export function enqueueNetworkEnabled(
 ): Promise<void> {
   return asyncQueue.enqueue(() => {
     persistence.setNetworkEnabled(enabled);
-    return enabled ? remoteStore.enableNetwork() : remoteStore.disableNetwork();
+    return enabled ? enableNetwork(remoteStore) : disableNetwork(remoteStore);
   });
 }
 

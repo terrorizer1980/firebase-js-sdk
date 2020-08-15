@@ -33,11 +33,15 @@ import {
   applyPrimaryState,
   applyTargetState,
   getActiveClients,
-  handleCredentialChange,
+  syncEngineHandleCredentialChange,
   newSyncEngine,
   SyncEngine
 } from './sync_engine';
-import { RemoteStore } from '../remote/remote_store';
+import {
+  newRemoteStore,
+  RemoteStore,
+  remoteStoreApplyPrimaryState, remoteStoreShutdown
+} from '../remote/remote_store';
 import { EventManager } from './event_manager';
 import { AsyncQueue } from '../util/async_queue';
 import { DatabaseId, DatabaseInfo } from './database_info';
@@ -341,13 +345,12 @@ export class OnlineComponentProvider {
         OnlineStateSource.SharedClientState
       );
 
-    this.remoteStore.remoteSyncer.handleCredentialChange = handleCredentialChange.bind(
+    this.remoteStore.syncEngine.handleCredentialChange = syncEngineHandleCredentialChange.bind(
       null,
       this.syncEngine
     );
 
-    await this.remoteStore.start();
-    await this.remoteStore.applyPrimaryState(this.syncEngine.isPrimaryClient);
+    await remoteStoreApplyPrimaryState(this.remoteStore, this.syncEngine.isPrimaryClient);
   }
 
   createEventManager(cfg: ComponentConfiguration): EventManager {
@@ -361,7 +364,7 @@ export class OnlineComponentProvider {
   }
 
   createRemoteStore(cfg: ComponentConfiguration): RemoteStore {
-    return new RemoteStore(
+    return newRemoteStore(
       this.localStore,
       this.datastore,
       cfg.asyncQueue,
@@ -388,6 +391,6 @@ export class OnlineComponentProvider {
   }
 
   terminate(): Promise<void> {
-    return this.remoteStore.shutdown();
+    return remoteStoreShutdown(this.remoteStore);
   }
 }
