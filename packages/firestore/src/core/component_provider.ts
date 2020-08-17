@@ -40,9 +40,10 @@ import {
 import {
   newRemoteStore,
   RemoteStore,
-  remoteStoreApplyPrimaryState, remoteStoreShutdown
+  remoteStoreApplyPrimaryState,
+  remoteStoreShutdown
 } from '../remote/remote_store';
-import { EventManager } from './event_manager';
+import { EventManager, newEventManager } from './event_manager';
 import { AsyncQueue } from '../util/async_queue';
 import { DatabaseId, DatabaseInfo } from './database_info';
 import { Datastore, newDatastore } from '../remote/datastore';
@@ -335,8 +336,8 @@ export class OnlineComponentProvider {
     this.sharedClientState = offlineComponentProvider.sharedClientState;
     this.datastore = this.createDatastore(cfg);
     this.remoteStore = this.createRemoteStore(cfg);
-    this.syncEngine = this.createSyncEngine(cfg);
     this.eventManager = this.createEventManager(cfg);
+    this.syncEngine = this.createSyncEngine(cfg);
 
     this.sharedClientState.onlineStateHandler = onlineState =>
       applyOnlineStateChange(
@@ -350,11 +351,14 @@ export class OnlineComponentProvider {
       this.syncEngine
     );
 
-    await remoteStoreApplyPrimaryState(this.remoteStore, this.syncEngine.isPrimaryClient);
+    await remoteStoreApplyPrimaryState(
+      this.remoteStore,
+      this.syncEngine.isPrimaryClient
+    );
   }
 
   createEventManager(cfg: ComponentConfiguration): EventManager {
-    return new EventManager(this.syncEngine);
+    return newEventManager();
   }
 
   createDatastore(cfg: ComponentConfiguration): Datastore {
@@ -382,6 +386,7 @@ export class OnlineComponentProvider {
     return newSyncEngine(
       this.localStore,
       this.remoteStore,
+      this.eventManager,
       this.sharedClientState,
       cfg.initialUser,
       cfg.maxConcurrentLimboResolutions,

@@ -18,17 +18,19 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import {
-  EventManager,
   eventManagerListen,
+  eventManagerUnlisten,
   ListenOptions,
+  newEventManager,
+  eventManagerOnWatchChange,
   QueryListener,
-  eventManagerUnlisten
+  eventManagerOnOnlineStateChange
 } from '../../../src/core/event_manager';
 import { Query } from '../../../src/core/query';
 import { OnlineState } from '../../../src/core/types';
 import { View } from '../../../src/core/view';
 import { ChangeType, ViewSnapshot } from '../../../src/core/view_snapshot';
-import { documentKeySet, documentMap } from '../../../src/model/collections';
+import { documentKeySet } from '../../../src/model/collections';
 import { DocumentSet } from '../../../src/model/document_set';
 import { addEqualityMatcher } from '../../util/equality_matcher';
 import {
@@ -39,23 +41,10 @@ import {
   keys,
   query
 } from '../../util/helpers';
-import { newSyncEngine, SyncEngine } from '../../../src/core/sync_engine';
-import { User } from '../../../src/auth/user';
-import { MAX_CONCURRENT_LIMBO_RESOLUTIONS } from '../../../src/core/firestore_client';
-import { newRemoteStore, RemoteStore } from '../../../src/remote/remote_store';
-import { newDatastore } from '../../../src/remote/datastore';
-import { AsyncQueue } from '../../../src/util/async_queue';
-import { NoopConnectivityMonitor } from '../../../src/remote/connectivity_monitor_noop';
-import { EmptyCredentialsProvider } from '../../../src/api/credentials';
-import { newSerializer } from '../../../src/platform/serializer';
-import { TEST_DATABASE_ID } from '../local/persistence_test_helpers';
-import { Connection } from '../../../src/remote/connection';
-
-// This test uses mocks that only implement the required functionality.
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 describe('EventManager', () => {
   // mock object.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function fakeQueryListener(query: Query): any {
     return {
       query,
@@ -65,45 +54,13 @@ describe('EventManager', () => {
     };
   }
 
-  let localStoreSpy: any;
-  let sharedClientStateSpy: any;
-  let remoteStore: RemoteStore;
-  let syncEngine: SyncEngine;
+  // mock objects.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let onListenSpy: any, onUnlistenSpy: any;
 
   beforeEach(() => {
-    const connectionSpy: Connection = {
-      invokeRPC: sinon.spy(),
-      invokeStreamingRPC: sinon.spy(),
-      openStream: sinon.stub().returns({
-        onOpen: sinon.spy(),
-        onClose: sinon.spy(),
-        onMessage: sinon.spy(),
-        send: sinon.spy(),
-        close: sinon.spy()
-      })
-    };
-    const datastore = newDatastore(
-      new EmptyCredentialsProvider(),
-      connectionSpy,
-      newSerializer(TEST_DATABASE_ID)
-    );
-    const asyncQueue = new AsyncQueue();
-    remoteStore = newRemoteStore(
-      localStoreSpy,
-      datastore,
-      asyncQueue,
-      /* onlineStateHandler= */ () => {},
-      new NoopConnectivityMonitor()
-    );
-
-    syncEngine = newSyncEngine(
-      localStoreSpy,
-      remoteStore,
-      sharedClientStateSpy,
-      User.UNAUTHENTICATED,
-      MAX_CONCURRENT_LIMBO_RESOLUTIONS,
-      /* isPrimary= */ true
-    );
+    onListenSpy = sinon.stub().returns(Promise.resolve(0));
+    onUnlistenSpy = sinon.spy();
   });
 
   it('handles many listenables per query', async () => {
@@ -111,27 +68,30 @@ describe('EventManager', () => {
     const fakeListener1 = fakeQueryListener(query1);
     const fakeListener2 = fakeQueryListener(query1);
 
-    const eventManager = new EventManager(syncEngine);
+    const eventManager = newEventManager();
+    eventManager.subscribe(onListenSpy.bind(null), onUnlistenSpy.bind(null));
 
     await eventManagerListen(eventManager, fakeListener1);
-    expect(localStoreSpy.allocateTarget.callCount).to.equal(1);
+    expect(onListenSpy.calledWith(query1)).to.be.true;
 
     await eventManagerListen(eventManager, fakeListener2);
-    expect(localStoreSpy.allocateTarget.callCount).to.equal(1);
+    expect(onListenSpy.callCount).to.equal(1);
 
     await eventManagerUnlisten(eventManager, fakeListener2);
-    expect(localStoreSpy.releaseTarget.callCount).to.equal(0);
+    expect(onListenSpy.callCount).to.equal(0);
 
     await eventManagerUnlisten(eventManager, fakeListener1);
-    expect(localStoreSpy.releaseTarget.callCount).to.equal(1);
+    expect(onUnlistenSpy.calledWith(query1)).to.be.true;
   });
 
   it('handles unlisten on unknown listenable gracefully', async () => {
     const query1 = query('foo/bar');
     const fakeListener1 = fakeQueryListener(query1);
-    const eventManager = new EventManager(syncEngine);
+
+    const eventManager = newEventManager();
+    eventManager.subscribe(onListenSpy.bind(null), onUnlistenSpy.bind(null));
     await eventManagerUnlisten(eventManager, fakeListener1);
-    expect(localStoreSpy.releaseTarget.callCount).to.equal(0);
+    expect(onUnlistenSpy.callCount).to.equal(0);
   });
 
   it('notifies listenables in the right order', async () => {
@@ -152,28 +112,21 @@ describe('EventManager', () => {
       eventOrder.push('listenable3');
     };
 
-    const eventManager = new EventManager(syncEngine);
+    const eventManager = newEventManager();
+    eventManager.subscribe(onListenSpy.bind(null), onUnlistenSpy.bind(null));
 
     await eventManagerListen(eventManager, fakeListener1);
     await eventManagerListen(eventManager, fakeListener2);
     await eventManagerListen(eventManager, fakeListener3);
-    expect(localStoreSpy.allocateTarget.callCount).to.equal(2);
-
-    // We expect one initial snapshot per query registration.
-    // This differs on Web since we return proper snapshots from SyncEngine's
-    // listen() implementation, whereas other platform return mocked values.
-    expect(eventOrder).to.deep.equal([
-      'listenable1',
-      'listenable2',
-      'listenable3'
-    ]);
-    eventOrder.splice(0, 3);
+    expect(onListenSpy.callCount).to.equal(2);
 
     // mock ViewSnapshot.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const viewSnap1: any = { query: query1 };
     // mock ViewSnapshot.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const viewSnap2: any = { query: query2 };
-    eventManager.onWatchChange([viewSnap1, viewSnap2]);
+    eventManagerOnWatchChange(eventManager, [viewSnap1, viewSnap2]);
 
     expect(eventOrder).to.deep.equal([
       'listenable1',
@@ -190,11 +143,12 @@ describe('EventManager', () => {
       events.push(onlineState);
     };
 
-    const eventManager = new EventManager(syncEngine);
+    const eventManager = newEventManager();
+    eventManager.subscribe(onListenSpy.bind(null), onUnlistenSpy.bind(null));
 
     await eventManagerListen(eventManager, fakeListener1);
     expect(events).to.deep.equal([OnlineState.Unknown]);
-    eventManager.onOnlineStateChange(OnlineState.Online);
+    eventManagerOnOnlineStateChange(eventManager, OnlineState.Online);
     expect(events).to.deep.equal([OnlineState.Unknown, OnlineState.Online]);
   });
 });

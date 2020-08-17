@@ -23,14 +23,18 @@ import {
   OfflineComponentProvider,
   OnlineComponentProvider
 } from '../../../src/core/component_provider';
-import {handleUserChange, LocalStore} from '../../../src/local/local_store';
+import { handleUserChange, LocalStore } from '../../../src/local/local_store';
 import { Deferred } from '../../../src/util/promise';
 import { logDebug } from '../../../src/util/log';
-import { SyncEngine } from '../../../src/core/sync_engine';
 import {
   RemoteStore,
   remoteStoreHandleCredentialChange
 } from '../../../src/remote/remote_store';
+import {
+  SyncEngine,
+  syncEngineListen,
+  syncEngineUnlisten
+} from '../../../src/core/sync_engine';
 import { Persistence } from '../../../src/local/persistence';
 import { EventManager } from '../../../src/core/event_manager';
 export const LOG_TAG = 'ComponentProvider';
@@ -98,7 +102,10 @@ export async function setOnlineComponentProvider(
   // precedence over the offline component provider.
   firestore._setCredentialChangeListener(user =>
     firestore._queue.enqueueAndForget(() =>
-      remoteStoreHandleCredentialChange(onlineComponentProvider.remoteStore, user)
+      remoteStoreHandleCredentialChange(
+        onlineComponentProvider.remoteStore,
+        user
+      )
     )
   );
   onlineDeferred.resolve(onlineComponentProvider);
@@ -156,9 +163,14 @@ export function getRemoteStore(firestore: Firestore): Promise<RemoteStore> {
 }
 
 export function getEventManager(firestore: Firestore): Promise<EventManager> {
-  return getOnlineComponentProvider(firestore).then(
-    components => components.eventManager
-  );
+  return getOnlineComponentProvider(firestore).then(components => {
+    const eventManager = components.eventManager;
+    eventManager.subscribe(
+      syncEngineListen.bind(null, components.syncEngine),
+      syncEngineUnlisten.bind(null, components.syncEngine)
+    );
+    return eventManager;
+  });
 }
 
 export function getPersistence(firestore: Firestore): Promise<Persistence> {

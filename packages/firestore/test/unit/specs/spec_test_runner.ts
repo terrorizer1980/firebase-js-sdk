@@ -23,9 +23,11 @@ import { DatabaseInfo } from '../../../src/core/database_info';
 import {
   EventManager,
   eventManagerListen,
+  eventManagerUnlisten,
   Observer,
   QueryListener,
-  eventManagerUnlisten
+  removeSnapshotsInSyncListener,
+  addSnapshotsInSyncListener
 } from '../../../src/core/event_manager';
 import {
   canonifyQuery,
@@ -43,6 +45,8 @@ import {
   activeLimboDocumentResolutions,
   enqueuedLimboDocumentResolutions,
   SyncEngine,
+  syncEngineListen,
+  syncEngineUnlisten,
   syncEngineWrite
 } from '../../../src/core/sync_engine';
 import { TargetId } from '../../../src/core/types';
@@ -75,7 +79,8 @@ import {
   disableNetwork,
   remoteStoreShutdown,
   enableNetwork,
-  remoteStoreHandleCredentialChange, outstandingWrites
+  remoteStoreHandleCredentialChange,
+  outstandingWrites
 } from '../../../src/remote/remote_store';
 import { mapCodeFromRpcCode } from '../../../src/remote/rpc_error';
 import {
@@ -293,6 +298,11 @@ abstract class TestRunner {
     this.syncEngine = onlineComponentProvider.syncEngine;
     this.eventManager = onlineComponentProvider.eventManager;
 
+    this.eventManager.subscribe(
+      syncEngineListen.bind(null, this.syncEngine),
+      syncEngineUnlisten.bind(null, this.syncEngine)
+    );
+
     await this.persistence.setDatabaseDeletedListener(async () => {
       await this.shutdown();
     });
@@ -480,14 +490,14 @@ abstract class TestRunner {
       error: () => {}
     };
     this.snapshotsInSyncListeners.push(observer);
-    this.eventManager.addSnapshotsInSyncListener(observer);
+    addSnapshotsInSyncListener(this.eventManager, observer);
     return Promise.resolve();
   }
 
   private doRemoveSnapshotsInSyncListener(): Promise<void> {
     const removeObs = this.snapshotsInSyncListeners.pop();
     if (removeObs) {
-      this.eventManager.removeSnapshotsInSyncListener(removeObs);
+      removeSnapshotsInSyncListener(this.eventManager, removeObs);
     } else {
       throw new Error('There must be a listener to unlisten to');
     }
@@ -778,7 +788,7 @@ abstract class TestRunner {
     // during an IndexedDb failure. Non-recovery tests will pick up the user
     // change when the AsyncQueue is drained.
     this.queue.enqueueRetryable(() =>
-      remoteStoreHandleCredentialChange(this.remoteStore,new User(user))
+      remoteStoreHandleCredentialChange(this.remoteStore, new User(user))
     );
   }
 

@@ -33,7 +33,8 @@ import {
   remoteStoreHandleCredentialChange,
   RemoteStore,
   enableNetwork,
-  disableNetwork, remoteStoreShutdown
+  disableNetwork,
+  remoteStoreShutdown
 } from '../remote/remote_store';
 import { AsyncQueue, wrapInUserErrorIfRecoverable } from '../util/async_queue';
 import { Code, FirestoreError } from '../util/error';
@@ -45,11 +46,15 @@ import {
   Observer,
   QueryListener,
   eventManagerListen,
-  eventManagerUnlisten
+  eventManagerUnlisten,
+  removeSnapshotsInSyncListener,
+  addSnapshotsInSyncListener
 } from './event_manager';
 import {
   registerPendingWritesCallback,
   SyncEngine,
+  syncEngineListen,
+  syncEngineUnlisten,
   syncEngineWrite
 } from './sync_engine';
 import { View } from './view';
@@ -289,6 +294,11 @@ export class FirestoreClient {
       this.syncEngine = onlineComponentProvider.syncEngine;
       this.eventMgr = onlineComponentProvider.eventManager;
 
+      this.eventMgr.subscribe(
+        syncEngineListen.bind(null, this.syncEngine),
+        syncEngineUnlisten.bind(null, this.syncEngine)
+      );
+
       // When a user calls clearPersistence() in one client, all other clients
       // need to be terminated to allow the delete to succeed.
       this.persistence.setDatabaseDeletedListener(async () => {
@@ -511,12 +521,12 @@ export class FirestoreClient {
     this.verifyNotTerminated();
     const wrappedObserver = new AsyncObserver(observer);
     this.asyncQueue.enqueueAndForget(async () =>
-      this.eventMgr.addSnapshotsInSyncListener(wrappedObserver)
+      addSnapshotsInSyncListener(this.eventMgr, wrappedObserver)
     );
     return () => {
       wrappedObserver.mute();
       this.asyncQueue.enqueueAndForget(async () =>
-        this.eventMgr.removeSnapshotsInSyncListener(wrappedObserver)
+        removeSnapshotsInSyncListener(this.eventMgr, wrappedObserver)
       );
     };
   }
@@ -621,12 +631,12 @@ export function enqueueSnapshotsInSyncListen(
 ): Unsubscribe {
   const wrappedObserver = new AsyncObserver(observer);
   asyncQueue.enqueueAndForget(async () =>
-    eventManager.addSnapshotsInSyncListener(wrappedObserver)
+    addSnapshotsInSyncListener(eventManager, wrappedObserver)
   );
   return () => {
     wrappedObserver.mute();
     asyncQueue.enqueueAndForget(async () =>
-      eventManager.removeSnapshotsInSyncListener(wrappedObserver)
+      removeSnapshotsInSyncListener(eventManager, wrappedObserver)
     );
   };
 }

@@ -201,22 +201,24 @@ export function enableIndexedDbPersistence(
   const onlineComponentProvider = new OnlineComponentProvider();
 
   // TODO(firestoreexp): Add forceOwningTab
-  return setOfflineComponentProvider(
-    firestoreImpl,
-    {
-      durable: true,
-      synchronizeTabs: false,
-      cacheSizeBytes:
-        settings.cacheSizeBytes || LruParams.DEFAULT_CACHE_SIZE_BYTES,
-      forceOwningTab: false
-    },
-    new IndexedDbOfflineComponentProvider()
-  )
-    .then(() =>
-      setOnlineComponentProvider(firestoreImpl, new OnlineComponentProvider())
+  return (
+    setOfflineComponentProvider(
+      firestoreImpl,
+      {
+        durable: true,
+        synchronizeTabs: false,
+        cacheSizeBytes:
+          settings.cacheSizeBytes || LruParams.DEFAULT_CACHE_SIZE_BYTES,
+        forceOwningTab: false
+      },
+      new IndexedDbOfflineComponentProvider()
     )
-    // Enqueue writes from a previous session
-    .then(() => fillWritePipeline(onlineComponentProvider.remoteStore));
+      .then(() =>
+        setOnlineComponentProvider(firestoreImpl, new OnlineComponentProvider())
+      )
+      // Enqueue writes from a previous session
+      .then(() => fillWritePipeline(onlineComponentProvider.remoteStore))
+  );
 }
 
 export function enableMultiTabIndexedDbPersistence(
@@ -235,22 +237,24 @@ export function enableMultiTabIndexedDbPersistence(
   const offlineComponentProvider = new MultiTabOfflineComponentProvider(
     onlineComponentProvider
   );
-  return setOfflineComponentProvider(
-    firestoreImpl,
-    {
-      durable: true,
-      synchronizeTabs: true,
-      cacheSizeBytes:
-        settings.cacheSizeBytes || LruParams.DEFAULT_CACHE_SIZE_BYTES,
-      forceOwningTab: false
-    },
-    offlineComponentProvider
-  )
-    .then(() =>
-      setOnlineComponentProvider(firestoreImpl, onlineComponentProvider)
+  return (
+    setOfflineComponentProvider(
+      firestoreImpl,
+      {
+        durable: true,
+        synchronizeTabs: true,
+        cacheSizeBytes:
+          settings.cacheSizeBytes || LruParams.DEFAULT_CACHE_SIZE_BYTES,
+        forceOwningTab: false
+      },
+      offlineComponentProvider
     )
-    // Enqueue writes from a previous session
-    .then(() => fillWritePipeline(onlineComponentProvider.remoteStore));
+      .then(() =>
+        setOnlineComponentProvider(firestoreImpl, onlineComponentProvider)
+      )
+      // Enqueue writes from a previous session
+      .then(() => fillWritePipeline(onlineComponentProvider.remoteStore))
+  );
 }
 
 export function clearIndexedDbPersistence(

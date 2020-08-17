@@ -15,38 +15,37 @@
  * limitations under the License.
  */
 
-import {SnapshotVersion} from '../core/snapshot_version';
-import {OnlineState, TargetId} from '../core/types';
+import { SnapshotVersion } from '../core/snapshot_version';
+import { OnlineState, TargetId } from '../core/types';
 import {
   getLastRemoteSnapshotVersion,
   LocalStore,
   nextMutationBatch
 } from '../local/local_store';
-import {TargetData, TargetPurpose} from '../local/target_data';
-import {MutationResult} from '../model/mutation';
+import { TargetData, TargetPurpose } from '../local/target_data';
+import { MutationResult } from '../model/mutation';
 import {
   BATCHID_UNKNOWN,
   MutationBatch,
   MutationBatchResult
 } from '../model/mutation_batch';
-import {debugAssert, debugCast} from '../util/assert';
-import {FirestoreError} from '../util/error';
-import {logDebug} from '../util/log';
-import {DocumentKeySet} from '../model/collections';
-import {AsyncQueue} from '../util/async_queue';
-import {ConnectivityMonitor, NetworkStatus} from './connectivity_monitor';
+import { debugAssert, debugCast } from '../util/assert';
+import { FirestoreError } from '../util/error';
+import { logDebug } from '../util/log';
+import { AsyncQueue } from '../util/async_queue';
+import { ConnectivityMonitor, NetworkStatus } from './connectivity_monitor';
 import {
   Datastore,
   newPersistentWatchStream,
   newPersistentWriteStream
 } from './datastore';
-import {OnlineStateTracker} from './online_state_tracker';
+import { OnlineStateTracker } from './online_state_tracker';
 import {
   PersistentListenStream,
   PersistentWriteStream
 } from './persistent_stream';
-import {RemoteSyncer} from './remote_syncer';
-import {isPermanentWriteError} from './rpc_error';
+import { RemoteSyncer } from './remote_syncer';
+import { isPermanentWriteError } from './rpc_error';
 import {
   DocumentWatchChange,
   ExistenceFilterChange,
@@ -55,9 +54,9 @@ import {
   WatchTargetChange,
   WatchTargetChangeState
 } from './watch_change';
-import {ByteString} from '../util/byte_string';
-import {isIndexedDbTransactionError} from '../local/simple_db';
-import {User} from '../auth/user';
+import { ByteString } from '../util/byte_string';
+import { isIndexedDbTransactionError } from '../local/simple_db';
+import { User } from '../auth/user';
 
 const LOG_TAG = 'RemoteStore';
 
@@ -255,15 +254,17 @@ async function disableNetworkInternal(
   }
 }
 
-export async function remoteStoreShutdown(remoteStore: RemoteStore): Promise<void> {
+export async function remoteStoreShutdown(
+  remoteStore: RemoteStore
+): Promise<void> {
   const remoteStoreImpl = debugCast(remoteStore, RemoteStoreImpl);
   logDebug(LOG_TAG, 'RemoteStore shutting down.');
   remoteStoreImpl.offlineCauses.add(OfflineCause.Shutdown);
-await disableNetworkInternal(remoteStoreImpl);
+  await disableNetworkInternal(remoteStoreImpl);
   remoteStoreImpl.connectivityMonitor.shutdown();
 
-// Set the OnlineState to Unknown (rather than Offline) to avoid potentially
-// triggering spurious listener events with cached data, etc.
+  // Set the OnlineState to Unknown (rather than Offline) to avoid potentially
+  // triggering spurious listener events with cached data, etc.
   remoteStoreImpl.onlineStateTracker.set(OnlineState.Unknown);
 }
 
@@ -361,10 +362,12 @@ function startWatchStream(remoteStoreImpl: RemoteStoreImpl): void {
     !!remoteStoreImpl.syncEngine.getRemoteKeysForTarget,
     'getRemoteKeysForTarget() not set'
   );
-  
+
   remoteStoreImpl.watchChangeAggregator = new WatchChangeAggregator({
-    getRemoteKeysForTarget:  targetId => remoteStoreImpl.syncEngine.getRemoteKeysForTarget!(targetId),
-    getTargetDataForTarget: targetId =>  remoteStoreImpl.listenTargets.get(targetId) || null
+    getRemoteKeysForTarget: targetId =>
+      remoteStoreImpl.syncEngine.getRemoteKeysForTarget!(targetId),
+    getTargetDataForTarget: targetId =>
+      remoteStoreImpl.listenTargets.get(targetId) || null
   });
   ensureWatchStream(remoteStoreImpl).start();
   remoteStoreImpl.onlineStateTracker.handleWatchStreamStart();
@@ -654,7 +657,7 @@ export async function fillWritePipeline(
   let lastBatchIdRetrieved =
     remoteStoreImpl.writePipeline.length > 0
       ? remoteStoreImpl.writePipeline[remoteStoreImpl.writePipeline.length - 1]
-        .batchId
+          .batchId
       : BATCHID_UNKNOWN;
 
   while (canAddToWritePipeline(remoteStoreImpl)) {
@@ -891,7 +894,7 @@ export async function remoteStoreApplyPrimaryState(
 }
 
 /**
- * Registers a callback function that is invoked when the network status 
+ * Registers a callback function that is invoked when the network status
  * changes. Multiple callbacks are supported.
  */
 function addNetworkStatusHandler(

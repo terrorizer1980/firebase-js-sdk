@@ -96,6 +96,12 @@ import {
 } from './view';
 import { ViewSnapshot } from './view_snapshot';
 import { wrapInUserErrorIfRecoverable } from '../util/async_queue';
+import {
+  EventManager,
+  eventManagerOnOnlineStateChange,
+  eventManagerOnWatchChange,
+  eventManagerOnWatchError
+} from './event_manager';
 
 const LOG_TAG = 'SyncEngine';
 
@@ -157,9 +163,6 @@ export interface SyncEngineListener {
 
   /** Handles the failure of a query. */
   onWatchError(query: Query, error: Error): void;
-
-  /** Handles a change in online state. */
-  onOnlineStateChange(onlineState: OnlineState): void;
 }
 
 /**
@@ -175,12 +178,13 @@ export interface SyncEngineListener {
  *
  * The SyncEngine’s methods should only ever be called by methods running in the
  * global async queue.
+ *
+ * PORTING NOTE: On Web, SyncEngine does not have an explicit subscribe()
+ * function. Instead, it directly depends on EventManager's tree-shakeable API
+ * (via `ensureWatchStream()`).
  */
 export interface SyncEngine {
   isPrimaryClient: boolean;
-
-  /** Subscribes to SyncEngine notifications. Has to be called exactly once. */
-  subscribe(syncEngineListener: SyncEngineListener): void;
 }
 
 /**
@@ -249,6 +253,7 @@ class SyncEngineImpl implements SyncEngine {
   constructor(
     readonly localStore: LocalStore,
     readonly remoteStore: RemoteStore,
+    readonly eventManager: EventManager,
     // PORTING NOTE: Manages state synchronization in multi-tab environments.
     readonly sharedClientState: SharedClientState,
     public currentUser: User,
@@ -258,31 +263,12 @@ class SyncEngineImpl implements SyncEngine {
   get isPrimaryClient(): boolean {
     return this._isPrimaryClient === true;
   }
-
-  subscribe(syncEngineListener: SyncEngineListener): void {
-    debugAssert(
-      syncEngineListener !== null,
-      'SyncEngine listener cannot be null'
-    );
-    debugAssert(
-      this.syncEngineListener === null,
-      'SyncEngine already has a subscriber.'
-    );
-
-    this.syncEngineListener = syncEngineListener;
-  }
-
-  assertSubscribed(fnName: string): void {
-    debugAssert(
-      this.syncEngineListener !== null,
-      'Trying to call ' + fnName + ' before calling subscribe().'
-    );
-  }
 }
 
 export function newSyncEngine(
   localStore: LocalStore,
   remoteStore: RemoteStore,
+  eventManager: EventManager,
   // PORTING NOTE: Manages state synchronization in multi-tab environments.
   sharedClientState: SharedClientState,
   currentUser: User,
@@ -292,6 +278,7 @@ export function newSyncEngine(
   const syncEngine = new SyncEngineImpl(
     localStore,
     remoteStore,
+    eventManager,
     sharedClientState,
     currentUser,
     maxConcurrentLimboResolutions
@@ -312,7 +299,6 @@ export async function syncEngineListen(
   query: Query
 ): Promise<ViewSnapshot> {
   const syncEngineImpl = ensureWatchCallbacks(syncEngine);
-  syncEngineImpl.assertSubscribed('listen()');
 
   let targetId;
   let viewSnapshot;
@@ -409,8 +395,6 @@ export async function syncEngineUnlisten(
   query: Query
 ): Promise<void> {
   const syncEngineImpl = debugCast(syncEngine, SyncEngineImpl);
-  syncEngineImpl.assertSubscribed('unlisten()');
-
   const queryView = syncEngineImpl.queryViewsByQuery.get(query)!;
   debugAssert(
     !!queryView,
@@ -477,7 +461,6 @@ export async function syncEngineWrite(
   userCallback: Deferred<void>
 ): Promise<void> {
   const syncEngineImpl = ensureWriteCallbacks(syncEngine);
-  syncEngineImpl.assertSubscribed('write()');
 
   try {
     const result = await localWrite(syncEngineImpl.localStore, batch);
@@ -503,7 +486,7 @@ export async function applyRemoteEvent(
   remoteEvent: RemoteEvent
 ): Promise<void> {
   const syncEngineImpl = debugCast(syncEngine, SyncEngineImpl);
-  syncEngineImpl.assertSubscribed('applyRemoteEvent()');
+
   try {
     const changes = await applyRemoteEventToLocalCache(
       syncEngineImpl.localStore,
@@ -568,7 +551,6 @@ export function applyOnlineStateChange(
     (!syncEngineImpl.isPrimaryClient &&
       source === OnlineStateSource.SharedClientState)
   ) {
-    syncEngineImpl.assertSubscribed('applyOnlineStateChange()');
     const newViewSnapshots = [] as ViewSnapshot[];
     syncEngineImpl.queryViewsByQuery.forEach((query, queryView) => {
       const viewChange = queryView.view.applyOnlineStateChange(onlineState);
@@ -580,8 +562,12 @@ export function applyOnlineStateChange(
         newViewSnapshots.push(viewChange.snapshot);
       }
     });
-    syncEngineImpl.syncEngineListener!.onOnlineStateChange(onlineState);
-    syncEngineImpl.syncEngineListener!.onWatchChange(newViewSnapshots);
+
+    eventManagerOnOnlineStateChange(syncEngineImpl.eventManager, onlineState);
+    if (syncEngineImpl.syncEngineListener) {
+      syncEngineImpl.syncEngineListener!.onWatchChange(newViewSnapshots);
+    }
+
     syncEngineImpl.onlineState = onlineState;
     if (syncEngineImpl.isPrimaryClient) {
       syncEngineImpl.sharedClientState.setOnlineState(onlineState);
@@ -606,7 +592,6 @@ export async function rejectListen(
   err: FirestoreError
 ): Promise<void> {
   const syncEngineImpl = debugCast(syncEngine, SyncEngineImpl);
-  syncEngineImpl.assertSubscribed('rejectListens()');
 
   // PORTING NOTE: Multi-tab only.
   syncEngineImpl.sharedClientState.updateQueryState(targetId, 'rejected', err);
@@ -667,8 +652,6 @@ export async function applySuccessfulWrite(
   mutationBatchResult: MutationBatchResult
 ): Promise<void> {
   const syncEngineImpl = debugCast(syncEngine, SyncEngineImpl);
-  syncEngineImpl.assertSubscribed('applySuccessfulWrite()');
-
   const batchId = mutationBatchResult.batch.batchId;
 
   try {
@@ -700,7 +683,6 @@ export async function rejectFailedWrite(
   error: FirestoreError
 ): Promise<void> {
   const syncEngineImpl = debugCast(syncEngine, SyncEngineImpl);
-  syncEngineImpl.assertSubscribed('rejectFailedWrite()');
 
   try {
     const changes = await rejectBatch(syncEngineImpl.localStore, batchId);
@@ -1005,6 +987,10 @@ export async function emitNewSnapsAndNotifyLocalStore(
   const docChangesInAllViews: LocalViewChanges[] = [];
   const queriesProcessed: Array<Promise<void>> = [];
 
+  if (syncEngineImpl.queryViewsByQuery.isEmpty()) {
+    return;
+  }
+
   syncEngineImpl.queryViewsByQuery.forEach((_, queryView) => {
     debugAssert(
       !!syncEngineImpl.applyDocChanges,
@@ -1167,7 +1153,6 @@ export async function applyBatchState(
   error?: FirestoreError
 ): Promise<void> {
   const syncEngineImpl = debugCast(syncEngine, SyncEngineImpl);
-  syncEngineImpl.assertSubscribed('applyBatchState()');
   const documents = await lookupMutationDocuments(
     syncEngineImpl.localStore,
     batchId
@@ -1493,6 +1478,16 @@ function ensureWatchCallbacks(syncEngine: SyncEngine): SyncEngineImpl {
     null,
     syncEngineImpl
   );
+  syncEngineImpl.syncEngineListener = {
+    onWatchChange: eventManagerOnWatchChange.bind(
+      null,
+      syncEngineImpl.eventManager
+    ),
+    onWatchError: eventManagerOnWatchError.bind(
+      null,
+      syncEngineImpl.eventManager
+    )
+  };
   return syncEngineImpl;
 }
 
